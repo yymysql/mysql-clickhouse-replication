@@ -121,10 +121,28 @@ class my_db():
             if result:
                 return result[0]
 
+    def sql_query(self,sql):
+        cursor=self.conn.cursor()
+        count=cursor.execute(sql)
+        if count == 0 :
+            result = 0
+        else:
+            result = 1
+        return result
+
+
     def get_pri(self,db,table):
         # 获取自增主键信息
         primary_key=[]
-        sql="select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}' and COLUMN_KEY='PRI' and EXTRA='auto_increment'".format(db,table)
+        pri_sql="select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}' and COLUMN_KEY='PRI'".format(db,table)
+        uni_sql="select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}' and COLUMN_KEY='UNI'".format(db,table)
+        if self.sql_query(pri_sql):
+            sql=pri_sql
+        elif self.sql_query(uni_sql):
+            sql=uni_sql
+        else:
+            sql=pri_sql       
+
         try:
             cursor=self.conn.cursor()
             cursor.execute(sql)
@@ -384,7 +402,7 @@ def binlog_reading(only_events,conf,debug):
             else:
                 name="{}.{}".format(schema,table)
                 if db.check_table_exists(schema,table):
-                    logger.error("要同步的表: %s 不存在自增主键，程序退出...." %(name))
+                    logger.error("要同步的表: %s 不存在主键或者唯一键，程序退出...." %(name))
                     exit(1)
 
     message="读取binlog: {0}:{1}".format(log_file,log_pos)
