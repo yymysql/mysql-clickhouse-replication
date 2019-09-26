@@ -278,7 +278,7 @@ def get_ch_column_type(db,table,conf):
 
 # 剔除比较旧的更新，保留最新的更新，否则update的时候数据会多出,因为update已经换成delete+insert。如果不这样处理同一时间update两次就会导致数据多出
 def keep_new_update(tmp_data,schema,table,pk_dict):
-    db_table="{}.{}".format(schema,table)
+    db_table="{0}.{1}".format(schema,table)
     t_dict = {}
     new_update_data = []
     max_time = 0
@@ -397,10 +397,10 @@ def binlog_reading(only_events,conf,debug):
         for table in only_tables:
             pk=db.get_pri(schema,table)
             if pk:
-                name="{}.{}".format(schema,table)
+                name="{0}.{1}".format(schema,table)
                 pk_dict[name]=pk
             else:
-                name="{}.{}".format(schema,table)
+                name="{0}.{1}".format(schema,table)
                 if db.check_table_exists(schema,table):
                     logger.error("要同步的表: %s 不存在主键或者唯一键，程序退出...." %(name))
                     exit(1)
@@ -557,7 +557,7 @@ def del_insert_record(table_action,tmp_data_dic,pk_dict):
         delete=tmp_data_dic[table_action[0]]
         insert=tmp_data_dic[table_action[1]]
         tb_name=table_action[0].split(".")
-        name="{}.{}".format(tb_name[0],tb_name[1])
+        name="{0}.{1}".format(tb_name[0],tb_name[1])
         pk=pk_dict[name]
         delete_list = []
         for i in delete:
@@ -581,7 +581,7 @@ def del_insert_record(table_action,tmp_data_dic,pk_dict):
 def event_primary_key(schema,table,tmp_data,pk_dict):
     del_list=[]
     last_del = {}
-    db_table="{}.{}".format(schema,table)
+    db_table="{0}.{1}".format(schema,table)
     primary_key=pk_dict[db_table][0]
     for data in tmp_data:
         for k,v in data['values'].items():
@@ -687,7 +687,7 @@ def data_to_ck(event,alarm_info,alarm_mail,debug,skip_dmls_all,skip_delete_tb_na
     tmp_data_dic={}
     event_table=[]
     for data in new_data:
-        name='{}.{}.{}'.format(data[0]['schema'],data[0]['table'],data[0]['action'])
+        name='{0}.{1}.{2}'.format(data[0]['schema'],data[0]['table'],data[0]['action'])
         tmp_data_dic[name]=data
         event_table.append(name)
 
