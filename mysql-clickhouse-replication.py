@@ -794,14 +794,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     config = args.conf
     logtoredis = args.logtoredis
-    global cnf
     cnf=get_config(config)
-    global colum_lower_upper
-    global mail_host
-    global mail_port
-    global mail_user
-    global mail_pass
-    global mail_send_from
     colum_lower_upper=int(cnf['clickhouse_server']['column_lower_upper'])
     mail_host=cnf['failure_alarm']['mail_host']
     mail_port=int(cnf['failure_alarm']['mail_port'])
