@@ -65,7 +65,7 @@ position = 3977081
 set global net_read_timeout=1800
 set global net_write_timeout=1800
 
-2. 同步的表如果字段有数字开头，比如37_is_old,那么程序会抛错。
+2. 同步的表如果字段有数字开头，比如123_is_old,那么程序会抛错。
 
 '''
 
@@ -511,7 +511,7 @@ def insert_update(tmp_data,pk_dict):
             if type(value) == decimal.Decimal:
                 data['values'][key]=str(value)
 
-            # 字段值是字典的处理【手游遇到】
+            # 字段值是字典的处理
             if type(value) == dict:
                 data['values'][key]=str(value)
             
@@ -802,14 +802,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     config = args.conf
     logtoredis = args.logtoredis
-    global cnf
     cnf=get_config(config)
-    global colum_lower_upper
-    global mail_host
-    global mail_port
-    global mail_user
-    global mail_pass
-    global mail_send_from
     colum_lower_upper=int(cnf['clickhouse_server']['column_lower_upper'])
     mail_host=cnf['failure_alarm']['mail_host']
     mail_port=int(cnf['failure_alarm']['mail_port'])
