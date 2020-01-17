@@ -10,7 +10,7 @@ python 2.7，同时可以利用pypy提高性能。
 
 
 
-pypy部署命令（如果使用原生的python无需执行下面命令）：
+pypy部署命令
 
 ```bash
 yum -y install pypy-libs pypy pypy-devel
@@ -20,6 +20,15 @@ pypy get-pip.py
 /usr/lib64/pypy-5.0.1/bin/pip install mysql-replication
 /usr/lib64/pypy-5.0.1/bin/pip install clickhouse-driver
 /usr/lib64/pypy-5.0.1/bin/pip install redis
+```
+
+如果不使用pypy，而是使用python，那么模块安装命令
+
+```bash
+pip install MySQL-python
+pip install mysql-replication
+pip install clickhouse-driver
+pip install redis
 ```
 
 同步设置参考文档：
