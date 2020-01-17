@@ -22,3 +22,6 @@ pypy get-pip.py
 /usr/lib64/pypy-5.0.1/bin/pip install redis
 ```
 
+同步设置参考文档：
+
+https://www.cnblogs.com/gomysql/p/11199856.html
