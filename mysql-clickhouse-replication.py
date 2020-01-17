@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
 # write by yayun 2019/03/10
-# 增量同步mysql数据到clickhouse
+# 同步mysql数据到clickhouse
 
 import redis
 import datetime
@@ -65,7 +65,7 @@ position = 3977081
 set global net_read_timeout=1800
 set global net_write_timeout=1800
 
-2. 同步的表如果字段有数字开头，比如123_is_old,那么程序会抛错。
+2. 同步的表如果字段有数字开头，比如37_is_old,那么程序会抛错。
 
 '''
 
@@ -121,6 +121,7 @@ class my_db():
             if result:
                 return result[0]
 
+
     def sql_query(self,sql):
         cursor=self.conn.cursor()
         count=cursor.execute(sql)
@@ -132,7 +133,7 @@ class my_db():
 
 
     def get_pri(self,db,table):
-        # 获取自增主键信息
+        # 获取主键或者唯一键信息
         primary_key=[]
         pri_sql="select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}' and COLUMN_KEY='PRI'".format(db,table)
         uni_sql="select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}' and COLUMN_KEY='UNI'".format(db,table)
@@ -141,8 +142,8 @@ class my_db():
         elif self.sql_query(uni_sql):
             sql=uni_sql
         else:
-            sql=pri_sql       
-
+            sql=pri_sql
+        
         try:
             cursor=self.conn.cursor()
             cursor.execute(sql)
@@ -402,7 +403,7 @@ def binlog_reading(only_events,conf,debug):
             else:
                 name="{0}.{1}".format(schema,table)
                 if db.check_table_exists(schema,table):
-                    logger.error("要同步的表: %s 不存在主键或者唯一键，程序退出...." %(name))
+                    logger.error("要同步的表: %s 不存在主键或者唯一键,程序退出...." %(name))
                     exit(1)
 
     message="读取binlog: {0}:{1}".format(log_file,log_pos)
@@ -417,7 +418,7 @@ def binlog_reading(only_events,conf,debug):
 
     stream = BinLogStreamReader(connection_settings=mysql_conf,resume_stream=True,blocking=True,\
                                 server_id=mysql_server_id, only_tables=only_tables,only_schemas=only_schemas,\
-                                only_events=only_events,log_file=log_file,log_pos=int(log_pos),fail_on_table_metadata_unavailable=True,slave_heartbeat=10)
+                                only_events=only_events,log_file=log_file,log_pos=int(log_pos),fail_on_table_metadata_unavailable=True,slave_heartbeat=10,freeze_schema=True)
     try:
         for binlogevent in stream:
             for row in binlogevent.rows:
@@ -508,6 +509,10 @@ def insert_update(tmp_data,pk_dict):
         
             # decimal 字段类型处理，后期ch兼容mysql协议可以删除
             if type(value) == decimal.Decimal:
+                data['values'][key]=str(value)
+
+            # 字段值是字典的处理【手游遇到】
+            if type(value) == dict:
                 data['values'][key]=str(value)
             
         insert_data.append(data['values'])
@@ -648,11 +653,14 @@ def data_to_ck(event,alarm_info,alarm_mail,debug,skip_dmls_all,skip_delete_tb_na
     if len(only_schemas) == 1:
         query_sql="select count(*) from system.mutations where is_done=0 and database in %s" % (str(tuple(only_schemas)))
         query_sql=query_sql.replace(",",'')  
+        query_schema=str(tuple(only_schemas))
+        query_schema=query_schema.replace(',','')
+        mutation_sql="select count(*) as mutation_faild ,concat(database,'.',table)as db,create_time from system.mutations where is_done=0 and database in %s group by db,create_time" % (query_schema)
     else:
         query_sql="select count(*) from system.mutations where is_done=0 and database in %s" % (str(tuple(only_schemas)))
-    mutation_sql="select count(*) as mutation_faild ,concat(database,'.',table)as db,create_time from system.mutations where is_done=0 and database in %s group by db,create_time" % (str(tuple(only_schemas)))
+        mutation_sql="select count(*) as mutation_faild ,concat(database,'.',table)as db,create_time from system.mutations where is_done=0 and database in %s group by db,create_time" % (str(tuple(only_schemas)))
     mutations_faild_num=client.execute(query_sql)[0][0]
-    if mutations_faild_num >= 10:
+    if mutations_faild_num >= 20:
         fail_data=client.execute(mutation_sql)
         for d in fail_data:
             fail_list.append(list(d))
@@ -794,7 +802,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     config = args.conf
     logtoredis = args.logtoredis
+    global cnf
     cnf=get_config(config)
+    global colum_lower_upper
+    global mail_host
+    global mail_port
+    global mail_user
+    global mail_pass
+    global mail_send_from
     colum_lower_upper=int(cnf['clickhouse_server']['column_lower_upper'])
     mail_host=cnf['failure_alarm']['mail_host']
     mail_port=int(cnf['failure_alarm']['mail_port'])
