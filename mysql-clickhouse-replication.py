@@ -2,6 +2,7 @@
 # -*- coding:utf-8 -*-
 # write by yayun 2019/03/10
 # 同步mysql数据到clickhouse
+# 2020/03/05 修复表上存在唯一键表数据有可能不一致的问题
 
 import redis
 import datetime
@@ -66,6 +67,10 @@ set global net_read_timeout=1800
 set global net_write_timeout=1800
 
 2. 同步的表如果字段有数字开头，比如123_is_old,那么程序会抛错。
+
+3. 如果主键是字符串，且字符串里面有类似'xxxx,''xxxx类的数据，那么程序中断，因为批量处理是换成in('xx','xx'),或者(xxx,xx)
+
+4. 同步的表必须有主键或者唯一键,否则程序退出
 
 '''
 
@@ -159,6 +164,28 @@ class my_db():
                     else:
                         primary_key.append(data['COLUMN_NAME'].lower())
             return primary_key
+
+    def get_unique(self,db,table):
+        unique_key=[]
+        uni_sql="SELECT  COLUMN_NAME  FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='{0}' \
+                 AND TABLE_NAME='{1}' and CONSTRAINT_NAME in (SELECT CONSTRAINT_NAME from information_schema.TABLE_CONSTRAINTS \
+                 WHERE TABLE_SCHEMA='{2}' AND TABLE_NAME='{3}' and CONSTRAINT_TYPE='UNIQUE')".format(db,table,db,table)
+        try:
+            cursor=self.conn.cursor()
+            cursor.execute(uni_sql)
+            result=cursor.fetchall()
+            cursor.close()
+        except MySQLdb.Warning,w:
+            resetwarnings()
+        else:
+            if result:
+                for data in result:
+                    if colum_lower_upper:
+                        unique_key.append(data['COLUMN_NAME'].upper())
+                    else:
+                        unique_key.append(data['COLUMN_NAME'].lower())
+            return unique_key
+
 
     def check_table_exists(self,db,table):
         sql="select count(*) as count from information_schema.tables where TABLE_SCHEMA='{0}' and TABLE_NAME='{1}'".format(db,table)
@@ -406,6 +433,15 @@ def binlog_reading(only_events,conf,debug):
                     logger.error("要同步的表: %s 不存在主键或者唯一键,程序退出...." %(name))
                     exit(1)
 
+    #获取有唯一键的库表
+    unique_key_dict={}
+    for schema in only_schemas:
+        for table in only_tables:
+            unique=db.get_unique(schema,table)
+            if unique:
+                name="{0}.{1}".format(schema,table)
+                unique_key_dict[name]=unique
+
     message="读取binlog: {0}:{1}".format(log_file,log_pos)
     ch_info="同步到clickhouse server {0}:{1}".format(cnf['clickhouse_server']['host'],cnf['clickhouse_server']['port'])
     repl_info="{0}:{1}".format(cnf['master_server']['host'],cnf['master_server']['port'])
@@ -423,6 +459,7 @@ def binlog_reading(only_events,conf,debug):
         for binlogevent in stream:
             for row in binlogevent.rows:
                 sequence += 1
+                new_event=False
                 event = {"schema": binlogevent.schema, "table": binlogevent.table}
                 event['sequence_number'] = sequence
                 if isinstance(binlogevent, WriteRowsEvent):
@@ -436,6 +473,15 @@ def binlog_reading(only_events,conf,debug):
                     event["values"] = row["after_values"]
                     event['event_unixtime']=int(time.time())
                     event['action_core']='2'
+                    db_table="{0}.{1}".format(binlogevent.schema,binlogevent.table)
+                    if db_table in unique_key_dict.keys():
+                        if row["after_values"][pk_dict[db_table][0]] != row["before_values"][pk_dict[db_table][0]]:
+                            new_event = {"schema": binlogevent.schema, "table": binlogevent.table}
+                            new_event['sequence_number'] = sequence
+                            new_event["action"] = "delete"
+                            new_event["values"] = row["before_values"]
+                            new_event['event_unixtime']=int(time.time())
+                            new_event['action_core']='1'
 
                 elif isinstance(binlogevent, DeleteRowsEvent):
                     event["action"] = "delete"
@@ -444,8 +490,13 @@ def binlog_reading(only_events,conf,debug):
                     event['action_core']='1'
 
                 event_list.append(event)
+                if new_event:
+                    event_list.append(new_event)
 
-                if len(event_list) == insert_nums or ( int(time.time()) - event_list[0]['event_unixtime'] >= interval and interval > 0 ):
+                #判断是否到一定批次，以及没有到达批次到达一定时间也进行提交，但是需要一条数据去触发，也就是存在一定的问题:
+                #比如设置了100条提交一次，但是只拿到了90条，此时一直没有任何数据进来，那么就不会提交。
+                #暂时这里没有好的处理办法,除非分离生产者和消费者
+                if len(event_list) >= insert_nums or ( int(time.time()) - event_list[0]['event_unixtime'] >= interval and interval > 0 ):
                     repl_status=db.slave_status()
                     log_file=stream.log_file
                     log_pos=stream.log_pos                    
@@ -498,20 +549,23 @@ def insert_update(tmp_data,pk_dict):
             # 处理mysql里面是Null的问题
             if value is None:
                 int_list=['Int8','Int16','Int32','Int64','UInt8','UInt16','UInt32','UInt64']
-                if column_type[key] == 'DateTime':
+                if column_type[key].split("(")[0] == 'DateTime':
                     data['values'][key]=datetime.datetime(1970,1,2,14,1)
-                elif column_type[key] == 'Date':
+                elif column_type[key].split("(")[0] == 'Date':
                     data['values'][key]=datetime.date(1970,1,2)
-                elif column_type[key] == 'String':
+                elif column_type[key].split("(")[0] == 'String':
                     data['values'][key]=''
-                elif column_type[key] in int_list:
+                elif column_type[key].split("(")[0] in int_list:
                     data['values'][key]=0
+                elif column_type[key].split("(")[0] == 'Decimal':
+                    data['values'][key]=0.0
         
             # decimal 字段类型处理，后期ch兼容mysql协议可以删除
             if type(value) == decimal.Decimal:
-                data['values'][key]=str(value)
+                if column_type[key].split("(")[0] == 'String' or  column_type[key].split("(")[1] == 'String)':
+                    data['values'][key]=str(value)
 
-            # 字段值是字典的处理
+            # 字段值是字典的处理【手游遇到】
             if type(value) == dict:
                 data['values'][key]=str(value)
             
@@ -659,7 +713,14 @@ def data_to_ck(event,alarm_info,alarm_mail,debug,skip_dmls_all,skip_delete_tb_na
     else:
         query_sql="select count(*) from system.mutations where is_done=0 and database in %s" % (str(tuple(only_schemas)))
         mutation_sql="select count(*) as mutation_faild ,concat(database,'.',table)as db,create_time from system.mutations where is_done=0 and database in %s group by db,create_time" % (str(tuple(only_schemas)))
-    mutations_faild_num=client.execute(query_sql)[0][0]
+
+    try:
+        mutations_faild_num=client.execute(query_sql)[0][0]
+    except Exception as error:
+        message="检查clickhouse mutations异常: %s" % (error)
+        logger.error(message)
+        exit(1)
+
     if mutations_faild_num >= 20:
         fail_data=client.execute(mutation_sql)
         for d in fail_data:
